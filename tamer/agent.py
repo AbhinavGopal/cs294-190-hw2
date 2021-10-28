@@ -20,7 +20,7 @@ LOGS_DIR = Path(__file__).parent.joinpath('logs')
 
 class SGDFunctionApproximator:
     """ SGD function approximator with RBF preprocessing. """
-    def __init__(self, env):
+    def __init__(self, env, gammas):
         
         # Feature preprocessing: Normalize to zero mean and unit variance
         # We use a few samples from the observation space to do this
@@ -32,14 +32,16 @@ class SGDFunctionApproximator:
 
         # Used to convert a state to a featurized represenation.
         # We use RBF kernels with different variances to cover different parts of the space
+        featurizer_array = []
+        i = 1
+        for gamma in gammas:
+            featurizer_array.append(('rbf'+str(i), RBFSampler(gamma=gamma, n_components=100)))
+            i+=1
         self.featurizer = pipeline.FeatureUnion(
-            [
-                ('rbf1', RBFSampler(gamma=5.0, n_components=100)),
-                ('rbf2', RBFSampler(gamma=2.0, n_components=100)),
-                ('rbf3', RBFSampler(gamma=1.0, n_components=100)),
-                ('rbf4', RBFSampler(gamma=0.5, n_components=100)),
-            ]
+            featurizer_array
         )
+        print(self.featurizer)
+        print(featurizer_array)
         self.featurizer.fit(self.scaler.transform(observation_examples))
 
         self.models = []
@@ -76,18 +78,23 @@ class Tamer:
         env,
         num_episodes,
         discount_factor=1,  # only affects Q-learning
-        epsilon=0, # only affects Q-learning
+        # epsilon=0.05, # only affects Q-learning
         min_eps=0,  # minimum value for epsilon after annealing
         tame=True,  # set to false for normal Q-learning
         ts_len=0.2,  # length of timestep for training TAMER
         output_dir=LOGS_DIR,
-        model_file_to_load=None  # filename of pretrained model
+        model_file_to_load=None,  # filename of pretrained model
+        epsilon=0, 
+        gammas=[5.0,2.0,1.0,0.5], 
+        epsilon_ts=False
     ):
         self.tame = tame
         self.ts_len = ts_len
         self.env = env
         self.uuid = uuid.uuid4()
         self.output_dir = output_dir
+        self.prior_success = np.array([1] * self.env.action_space.n)
+        self.prior_failure = np.array([1] * self.env.action_space.n)
 
         # init model
         if model_file_to_load is not None:
@@ -95,15 +102,17 @@ class Tamer:
             self.load_model(filename=model_file_to_load)
         else:
             if tame:
-                self.H = SGDFunctionApproximator(env)  # init H function
+                self.H = SGDFunctionApproximator(env, gammas)  # init H function
             else:  # optionally run as standard Q Learning
-                self.Q = SGDFunctionApproximator(env)  # init Q function
+                self.Q = SGDFunctionApproximator(env, gammas)  # init Q function
 
         # hyperparameters
         self.discount_factor = discount_factor
-        self.epsilon = epsilon if not tame else 0
+        self.epsilon = epsilon
         self.num_episodes = num_episodes
         self.min_eps = min_eps
+        self.gammas=gammas
+        self.epsilon_ts=epsilon_ts
 
         # calculate episodic reduction in epsilon
         self.epsilon_step = (epsilon - min_eps) / num_episodes
@@ -116,6 +125,8 @@ class Tamer:
             'Human Reward',
             'Environment Reward',
         ]
+        print(self.output_dir)
+        print(self.uuid)
         self.reward_log_path = os.path.join(self.output_dir, f'{self.uuid}.csv')
 
     def act(self, state):
@@ -124,7 +135,28 @@ class Tamer:
             preds = self.H.predict(state) if self.tame else self.Q.predict(state)
             return np.argmax(preds)
         else:
+            if self.epsilon_ts:
+                return self.act_ts(state)
             return np.random.randint(0, self.env.action_space.n)
+    
+    def get_posterior_sample(self):
+        return np.random.beta(self.prior_success, self.prior_failure)
+# 
+    def act_ts(self, state):
+        def pick_action(self, observation):
+            """Thompson sampling with Beta posterior for action selection."""
+            # self.count += 1
+            # print('TS Count:', self.count)
+            sampled_means = self.get_posterior_sample()
+            action = random_argmax(sampled_means)
+            return action
+
+        def random_argmax(vector):
+            """Helper function to select argmax at random... not just first one."""
+            index = np.random.choice(np.where(vector == vector.max())[0])
+            return index
+        return pick_action(self, state)
+
 
     def _train_episode(self, episode_index, disp):
         print(f'Episode: {episode_index + 1}  Timestep:', end='')
@@ -141,6 +173,7 @@ class Tamer:
 
                 # Determine next action
                 action = self.act(state)
+                print('action', action)
                 if self.tame:
                     disp.show_action(action)
 
@@ -163,6 +196,10 @@ class Tamer:
                         time.sleep(0.01)  # save the CPU
 
                         human_reward = disp.get_scalar_feedback()
+                        if human_reward == 1:
+                            self.prior_success[action] += 1
+                        elif human_reward == -1:
+                            self.prior_failure[action] += 1
                         feedback_ts = dt.datetime.now().time()
                         if human_reward != 0:
                             dict_writer.writerow(
