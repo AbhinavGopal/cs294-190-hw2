@@ -40,8 +40,6 @@ class SGDFunctionApproximator:
         self.featurizer = pipeline.FeatureUnion(
             featurizer_array
         )
-        print(self.featurizer)
-        print(featurizer_array)
         self.featurizer.fit(self.scaler.transform(observation_examples))
 
         self.models = []
@@ -125,8 +123,6 @@ class Tamer:
             'Human Reward',
             'Environment Reward',
         ]
-        print(self.output_dir)
-        print(self.uuid)
         self.reward_log_path = os.path.join(self.output_dir, f'{self.uuid}.csv')
 
     def act(self, state):
@@ -173,7 +169,6 @@ class Tamer:
 
                 # Determine next action
                 action = self.act(state)
-                print('action', action)
                 if self.tame:
                     disp.show_action(action)
 

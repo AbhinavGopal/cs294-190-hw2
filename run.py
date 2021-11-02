@@ -17,7 +17,7 @@ async def main(epsilon, gammas, epsilon_ts):
     discount_factor = 1
     epsilon = 0  # vanilla Q learning actually works well with no random exploration
     min_eps = 0
-    num_episodes = 2
+    num_episodes = 20
     tame = True  # set to false for vanilla Q learning
 
     # set a timestep for training TAMER
@@ -44,9 +44,6 @@ if __name__ == '__main__':
     parser.add_argument('--epsilon_ts', action='store_true', default=False)
     args = parser.parse_args()
     asyncio.run(main(args.epsilon, args.gammas, args.epsilon_ts))
-
-    # New stuff for Offline RL
-    args = parser.parse_args()
 
 
 
